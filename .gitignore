@@ -1,0 +1,12 @@
+# Generated at runtime by the scripts — see each README for how to reproduce
+*.keras
+*.pth
+*_scaler.json
+*_scalers.json
+best_*
+*.png
+comparison_results.json
+
+.DS_Store
+__pycache__/
+*.pyc
