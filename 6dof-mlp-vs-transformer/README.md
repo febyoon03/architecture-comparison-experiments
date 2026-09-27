@@ -1,17 +1,20 @@
 # 6-DoF Forward Kinematics: MLP vs. Transformer
 
-Same regression task, two architectures: predict an ABB IRB2400 robot arm's end-effector pose (x, y, z, yaw, pitch, roll) from its 6 joint angles.
+The same regression task, tried with two different architectures: predict an ABB IRB2400 robot arm's end-effector pose (x, y, z, yaw, pitch, roll) from its 6 joint angles.
 
 ## Motivation
 
-Forward kinematics is a deterministic, purely feedforward function of the joint angles — there's no sequential dependency between q1 and q2 the way there is between word 1 and word 2 of a sentence. A Transformer encoder-decoder is a real architectural mismatch for this task on paper; this experiment checks whether that mismatch actually costs anything in practice, and by how much.
+Forward kinematics is a deterministic, purely feedforward function of the joint angles. There's no sequential dependency between joint 1 and joint 2, the way there is between word 1 and word 2 of a sentence. On paper, a Transformer encoder-decoder is a real architectural mismatch for this task. This experiment checks whether that mismatch actually costs anything in practice, and how much.
 
 ## Approach
 
-- **MLP:** Dense(128)→Dense(64)→Dense(32)→Dense(6), BatchNorm before each ReLU, trained directly on the 6→6 mapping (Keras/TensorFlow).
-- **Transformer:** encoder-decoder over the 6 joint angles and 6 pose outputs treated as sequences (PyTorch), with sinusoidal positional encoding on the encoder side and a learned BOS token (in scaled target space, not zero) for the decoder. Trained with teacher forcing; evaluated with true autoregressive decoding, since that's what the model would actually have to do at inference time with no ground truth to feed it.
-- **Both models:** MAE for position (x,y,z, in mm) and orientation (yaw,pitch,roll, in rad, using circular distance) are always reported separately, never averaged into one "mm/rad" number — those are different physical quantities and collapsing them hides which one a model is actually failing at.
-- **Both models:** the CSV split, scaler fitting, and target un-scaling are all train-only / test-isolated — no leakage of test statistics into training.
+**MLP.** A simple stack of dense layers (128, then 64, then 32, then 6 outputs), with batch normalization before each ReLU, trained directly on the 6-to-6 mapping using Keras/TensorFlow.
+
+**Transformer.** An encoder-decoder that treats the 6 joint angles and the 6 pose outputs as sequences, built in PyTorch. It uses sinusoidal positional encoding on the encoder side, and a learned start token (in scaled target space, not zero) on the decoder side. It's trained with teacher forcing, but evaluated with true autoregressive decoding, since that's what the model would actually have to do at inference time, with no ground truth available to feed it.
+
+For both models, position error (x, y, z, in mm) and orientation error (yaw, pitch, roll, in radians, using circular distance) are always reported separately, never averaged together into one combined "mm/rad" number. Those are two different physical quantities, and combining them would hide which one a model is actually struggling with.
+
+Also for both models, the train/test split, the scaler fitting, and the un-scaling of predictions back to real units are all done train-only and kept isolated from the test set, so no test information leaks into training.
 
 ## Results
 
@@ -21,17 +24,17 @@ Forward kinematics is a deterministic, purely feedforward function of the joint 
 | Test MAE position | **114.0mm** | 170.9mm |
 | Test MAE orientation | 1.204 rad | 1.251 rad |
 
-**Takeaway:** the MLP wins clearly on position with 19x fewer parameters — the architectural mismatch does cost the Transformer something real here, not just in theory. Orientation is close between the two, but both are still poor in absolute terms (~1.2 rad average error on yaw/pitch/roll) — 8,000 random poses and a 20-30 epoch budget just isn't enough training signal for the harder orientation axes, for either model.
+**Takeaway.** The MLP wins clearly on position, using 19 times fewer parameters. The architectural mismatch really does cost the Transformer something in practice here, not just in theory. Orientation results are close between the two, but both are still fairly poor in absolute terms, at roughly 1.2 radians average error on yaw, pitch, and roll. With only 8,000 random poses and a 20-30 epoch training budget, there simply isn't enough training signal yet for either model to handle the harder orientation axes well.
 
-**A second, arguably more important finding:** the Transformer's teacher-forced evaluation (position MAE 160.3mm) looks meaningfully better than its true autoregressive evaluation (170.9mm) — because teacher forcing feeds the model ground-truth previous outputs it won't have at real inference time. The script measures both and prints the gap explicitly so that number can't get reported by accident; only the autoregressive number is the real FK accuracy.
+**A second, arguably more important finding.** The Transformer's teacher-forced evaluation (160.3mm position MAE) looks meaningfully better than its true autoregressive evaluation (170.9mm), because teacher forcing feeds the model ground-truth previous outputs that it won't actually have available at real inference time. The script measures both numbers and prints the gap explicitly, so the better-looking but misleading number can't get reported by accident. Only the autoregressive number reflects the model's real forward-kinematics accuracy.
 
 ## Tech stack
 
-MLP: Python, TensorFlow/Keras, pandas, NumPy. Transformer: Python, PyTorch, pandas, NumPy.
+For the MLP: Python, TensorFlow/Keras, pandas, and NumPy. For the Transformer: Python, PyTorch, pandas, and NumPy.
 
-## How to run
+## How to run it
 
-Both scripts expect `datasetIRB2400.csv` (ABB IRB2400 forward-kinematics dataset — this is a publicly available robotics dataset, not included in this repo; place it in this folder, or point to it via `--csv` or the `IRB2400_CSV` environment variable).
+Both scripts expect a file called `datasetIRB2400.csv`, a publicly available ABB IRB2400 forward-kinematics dataset that is not included in this repo. Place it in this folder, or point to it with `--csv` or the `IRB2400_CSV` environment variable.
 
 ```bash
 pip install tensorflow pandas numpy matplotlib   # for the MLP
@@ -41,12 +44,6 @@ pip install torch pandas numpy matplotlib        # for the Transformer
 python transformer_6dof_forward_kinematics.py --csv path/to/datasetIRB2400.csv
 ```
 
-## Limitations / what's next
+## Limitations and what's next
 
-- 8,000 rows and a short training budget (30 MLP epochs / up to 30 Transformer epochs with early stopping) is a pilot scale, not a converged final model for either architecture — the *relative* comparison is the point, not the absolute MAE.
-- Orientation error is high for both models; a longer training run or an orientation-specific loss weighting would be the natural next step before drawing conclusions about the orientation axes specifically.
-- The two scripts use different data splits (MLP: 64/16/20, Transformer: 80/10/10) because that's what each was independently built with — the same 8,000-row source file underlies both, so this doesn't bias the comparison, but it's worth flagging for exact reproducibility.
-
-## Credits
-
-Built independently for a course assignment (Assignment 1: MLP, Assignment 2: Transformer). No external code reused beyond TensorFlow/PyTorch themselves.
+With only 8,000 rows and a short training budget (30 epochs for the MLP, up to 30 epochs with early stopping for the Transformer), this is a pilot-scale experiment rather than a fully converged final model for either architecture. The point here is the relative comparison between the two, not the absolute MAE numbers.
